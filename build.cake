@@ -1,4 +1,4 @@
-#tool nuget:?package=NUnit.ConsoleRunner&version=3.9.0
+#tool nuget:https://ci.appveyor.com/nuget/nunit-console/?package=NUnit.ConsoleRunner&version=3.10.0-dev-04357
 #tool GitLink
 
 //////////////////////////////////////////////////////////////////////
