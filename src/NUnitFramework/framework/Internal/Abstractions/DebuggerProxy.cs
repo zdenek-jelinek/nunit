@@ -21,33 +21,18 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // ***********************************************************************
 
-using System;
 using System.Diagnostics;
 
 namespace NUnit.Framework.Internal.Abstractions
 {
     /// <summary>
-    /// Used to create an <see cref="IDebugger"/> implementation instance based on configuration.
+    /// A production <see cref="IDebugger"/> implementation that delegates directly to .NET's <see cref="Debugger"/>.
     /// </summary>
-    public partial class DebuggerFactory
+    public class DebuggerProxy : IDebugger
     {
         /// <summary>
-        /// A customizable delegate for creating <see cref="IDebugger"/>.
-        /// Creates an instance that delegates directly to <see cref="Debugger"/> when <see langword="null"/> (default).
+        /// Returns whether a debugger is currently attached to the process
         /// </summary>
-        /// <remarks>
-        /// This property should only be accessed in tests to emulate debugger attached to the process.
-        /// </remarks>
-        public static Func<IDebugger> ImplementationFactory { get; set; }
-
-        /// <summary>
-        /// Creates an <see cref="IDebugger"/> implementation instance.
-        /// </summary>
-        /// <returns>An <see cref="IDebugger"/> implementation instace.</returns>
-        public IDebugger Create()
-        {
-            return ImplementationFactory?.Invoke()
-                ?? new DebuggerProxy();
-        }
+        public bool IsAttached => Debugger.IsAttached;
     }
 }
