@@ -51,6 +51,8 @@ namespace NUnit.Framework.Attributes
 
             public const int Timeout = 100;
             public const string FailureMessage = "The test has failed";
+            public const string IgnoreMessage = "The test was ignored";
+            public const string InconclusiveMessage = "The test was inconclusive";
 
             [Timeout(Timeout)]
             public void TestThatTimesOutButOtherwisePasses()
@@ -93,6 +95,36 @@ namespace NUnit.Framework.Attributes
             {
                 Assert.Fail(FailureMessage);
             }
+
+            [Timeout(Timeout)]
+            public void TestThatIsIgnoredViaAssertImmediately()
+            {
+                Assert.Ignore(IgnoreMessage);
+            }
+
+            [Timeout(Timeout)]
+            public void TestThatIsInconclusiveViaAssertImmediately()
+            {
+                Assert.Inconclusive(InconclusiveMessage);
+            }
+
+            [Timeout(Timeout)]
+            public void TestThatFailsUsingMultipleAssertImmediatelly()
+            {
+                Assert.Multiple(() => Assert.Fail(FailureMessage));
+            }
+
+#if !NET35 && !NET40
+            [Timeout(Timeout)]
+            public void TestThatFailsUsingAsynchronousMultipleAssertImmediatelly()
+            {
+                Assert.Multiple(async () => 
+                {
+                    await System.Threading.Tasks.Task.Yield();
+                    Assert.Fail(FailureMessage);
+                });
+            }
+#endif
         }
 
         [Test, Timeout(500), SetCulture("fr-BE"), SetUICulture("es-BO")]
@@ -202,6 +234,86 @@ namespace NUnit.Framework.Attributes
             // then
             Assert.That(result.ResultState, Is.EqualTo(ResultState.Success));
         }
+
+        [Test]
+        [Theory]
+        public void InconclusiveIsReportedForTestThatIsAssertedInconclusiveWithoutTimingOut(bool debuggerAttached)
+        {
+            // given
+            var assertInconclusiveTest = TestBuilder
+                .MakeTestCase(typeof(SampleTests), nameof(SampleTests.TestThatIsInconclusiveViaAssertImmediately));
+
+            var debugger = new StubDebugger { IsAttached = debuggerAttached };
+
+            // when
+            var result = TestBuilder.RunTest(assertInconclusiveTest, new SampleTests(), debugger);
+
+            // then
+            Assert.That(result.ResultState.Status, Is.EqualTo(TestStatus.Inconclusive));
+            Assert.That(result.ResultState.Site, Is.EqualTo(FailureSite.Test));
+            Assert.That(result.Message, Is.EqualTo(SampleTests.InconclusiveMessage));
+        }
+
+        [Test]
+        [Theory]
+        public void IgnoredIsReportedForTestThatIsAssertedIgnoredWithoutTimingOut(bool debuggerAttached)
+        {
+            // given
+            var assertIgnoredTest = TestBuilder
+                .MakeTestCase(typeof(SampleTests), nameof(SampleTests.TestThatIsIgnoredViaAssertImmediately));
+
+            var debugger = new StubDebugger { IsAttached = debuggerAttached };
+
+            // when
+            var result = TestBuilder.RunTest(assertIgnoredTest, new SampleTests(), debugger);
+
+            // then
+            Assert.That(result.ResultState.Status, Is.EqualTo(TestStatus.Skipped));
+            Assert.That(result.ResultState.Site, Is.EqualTo(FailureSite.Test));
+            Assert.That(result.Message, Is.EqualTo(SampleTests.IgnoreMessage));
+        }
+
+        [Test]
+        [Theory]
+        public void FailureIsReportedForTestThatFailsInMultipleAssertWithoutTimingOut(bool debuggerAttached)
+        {
+            // given
+            var multipleAssertFailingTest = TestBuilder
+                .MakeTestCase(typeof(SampleTests), nameof(SampleTests.TestThatFailsUsingMultipleAssertImmediatelly));
+
+            var debugger = new StubDebugger { IsAttached = debuggerAttached };
+
+            // when
+            var result = TestBuilder.RunTest(multipleAssertFailingTest, new SampleTests(), debugger);
+
+            // then
+            Assert.That(result.ResultState.Status, Is.EqualTo(TestStatus.Failed));
+            Assert.That(result.ResultState.Site, Is.EqualTo(FailureSite.Test));
+            Assert.That(result.Message, Is.EqualTo(SampleTests.FailureMessage));
+        }
+
+#if !NET35 && !NET40
+        [Test]
+        [Theory]
+        public void FailureIsReportedForTestThatFailsInAsynchronousMultipleAssertWithoutTimingOut(bool debuggerAttached)
+        {
+            // given
+            var multipleAssertFailingTest = TestBuilder
+                .MakeTestCase(
+                    typeof(SampleTests),
+                    nameof(SampleTests.TestThatFailsUsingAsynchronousMultipleAssertImmediatelly));
+
+            var debugger = new StubDebugger { IsAttached = debuggerAttached };
+
+            // when
+            var result = TestBuilder.RunTest(multipleAssertFailingTest, new SampleTests(), debugger);
+
+            // then
+            Assert.That(result.ResultState.Status, Is.EqualTo(TestStatus.Failed));
+            Assert.That(result.ResultState.Site, Is.EqualTo(FailureSite.Test));
+            Assert.That(result.Message, Is.EqualTo(SampleTests.FailureMessage));
+        }
+#endif
 
 #if PLATFORM_DETECTION && THREAD_ABORT
         [Test, Timeout(500)]
