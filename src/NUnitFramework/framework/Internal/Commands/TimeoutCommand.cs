@@ -70,12 +70,13 @@ namespace NUnit.Framework.Internal.Commands
                 _commandTimer = new Timer(
                     (o) =>
                     {
+                        _commandTimedOut = true;
+
                         if (_debugger.IsAttached)
                         {
                             return;
                         }
 
-                        _commandTimedOut = true;
                         ThreadUtility.Abort(testThread, nativeThreadId);
                         // No join here, since the thread doesn't really terminate
                     },
@@ -88,8 +89,7 @@ namespace NUnit.Framework.Internal.Commands
             {
                 _commandTimer.Dispose();
 
-                // If the timer cancelled the current thread, change the result
-                if (_commandTimedOut)
+                if (ShouldReportTimeout(context.CurrentResult.ResultState))
                 {
                     context.CurrentResult.SetResult(ResultState.Failure, $"Test exceeded Timeout value of {timeout}ms");
                 }
@@ -100,6 +100,21 @@ namespace NUnit.Framework.Internal.Commands
 #endif
         }
 
+#if THREAD_ABORT
+        private bool ShouldReportTimeout(ResultState resultState)
+        {
+            if (_debugger.IsAttached)
+            {
+                return _commandTimedOut
+                    && (resultState.Status != TestStatus.Failed || resultState.Label == ResultState.Cancelled.Label);
+            }
+            else
+            {
+                return _commandTimedOut;
+            }
+        }
+#endif
+
 #if !THREAD_ABORT
         /// <summary>
         /// Runs the test, saving a TestResult in the supplied TestExecutionContext.
@@ -108,20 +123,24 @@ namespace NUnit.Framework.Internal.Commands
         /// <returns>A TestResult</returns>
         public override TestResult Execute(TestExecutionContext context)
         {
+            if (_debugger.IsAttached)
+            {
+                return ExecuteWithDebugger(context);
+            }
+            else
+            {
+                return ExecuteWithoutDebugger(context);
+            }
+        }
+
+        private TestResult ExecuteWithoutDebugger(TestExecutionContext context)
+        {
             try
             {
-                var testExecution = ExecuteTestAsync(context);
-
-                if (WaitForTimeout(testExecution))
+                var testExecution = RunTestWithTimeoutAsync(context);
+                if (!testExecution.IsCompleted)
                 {
-                    context.CurrentResult.SetResult(new ResultState(
-                        TestStatus.Failed,
-                        $"Test exceeded Timeout value {_timeout}ms.",
-                        FailureSite.Test));
-                }
-                else
-                {
-                    return context.CurrentResult = testExecution.Result;
+                    SetResultToTimeoutFailure(context);
                 }
             }
             catch (Exception exception)
@@ -132,16 +151,100 @@ namespace NUnit.Framework.Internal.Commands
             return context.CurrentResult;
         }
 
-        private Task<TestResult> ExecuteTestAsync(TestExecutionContext context)
+        private TestResult ExecuteWithDebugger(TestExecutionContext context)
         {
-            return Task.Run(() => innerCommand.Execute(context));
+            bool completedInTime = false;
+            bool started = false;
+            try
+            {
+                var testExecution = RunTestWithTimeoutAsync(context);
+                started = true;
+
+                completedInTime = testExecution.IsCompleted;
+
+                AwaitCompletionWithoutExceptionWrapping(testExecution);
+
+                if (!completedInTime && !IsFailure(context.CurrentResult.ResultState))
+                {
+                    SetResultToTimeoutFailure(context);
+                }
+            }
+            catch (Exception exception)
+            {
+                if (!started || completedInTime || IsFailure(exception))
+                {
+                    context.CurrentResult.RecordException(exception, FailureSite.Test);
+                }
+                else
+                {
+                    SetResultToTimeoutFailure(context);
+                }
+            }
+
+            return context.CurrentResult;
         }
 
-        private bool WaitForTimeout(Task testExecution)
+        private Task RunTestWithTimeoutAsync(TestExecutionContext context)
         {
-            var executionCompletedInTime = testExecution.Wait(_timeout);
+            var testExecution = Task.Run(() => context.CurrentResult = innerCommand.Execute(context));
 
-            return !executionCompletedInTime && !_debugger.IsAttached;
+            AwaitCompletionWithoutExceptionWrapping(testExecution, _timeout);
+
+            return testExecution;
+        }
+
+        private void AwaitCompletionWithoutExceptionWrapping(Task<TestResult> testExecution, int timeoutMilliseconds)
+        {
+            var timeout = Task
+                .WhenAny(testExecution, Task.Delay(timeoutMilliseconds))
+                .Unwrap();
+
+            AwaitCompletionWithoutExceptionWrapping(timeout);
+        }
+
+        private static void AwaitCompletionWithoutExceptionWrapping(Task task)
+        {
+            task.GetAwaiter().GetResult();
+        }
+
+        private void SetResultToTimeoutFailure(TestExecutionContext context)
+        {
+            context.CurrentResult.SetResult(new ResultState(
+                TestStatus.Failed,
+                $"Test exceeded Timeout value {_timeout}ms.",
+                FailureSite.Test));
+        }
+
+        private static bool IsFailure(Exception exception)
+        {
+            var resultStateException = UnwrapResultStateException(exception);
+            return resultStateException is null
+                || IsFailure(resultStateException.ResultState);
+        }
+
+        private static bool IsFailure(ResultState resultState)
+        {
+            return resultState.Status == TestStatus.Failed;
+        }
+
+        private static ResultStateException UnwrapResultStateException(Exception exception)
+        {
+            while (true)
+            {
+                if (exception is ResultStateException resultStateException)
+                {
+                    return resultStateException;
+                }
+
+                if (exception.InnerException != null)
+                {
+                    exception = exception.InnerException;
+                }
+                else
+                {
+                    return null;
+                }
+            }
         }
 #endif
     }
